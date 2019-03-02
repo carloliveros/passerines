@@ -1,0 +1,294 @@
+################################################################################
+#
+# Author          : Carl H. Oliveros (based on tutorials from 
+# https://github.com/revbayes/revbayes_tutorial/raw/master/tutorial_TeX/RB_Manual.pdf
+# RevBayes        : Bayesian inference of diversification rates under an
+#                   episodic birth-death model with empirical taxon sampling,
+#                   environment-correlated speciation & extinction rates, 
+#                   and reverse-jump MCMC for model comparison 
+#
+################################################################################
+
+#######################
+# Reading in the Data #
+#######################
+
+### Read in the "observed" tree
+T <- readTrees("rs-25-lognor.combined.ann.passonly.nostem.tre")[1]
+
+# Get some useful variables from the data. We need these later on.
+taxa <- T.taxa()
+
+# set my move index
+mvi = 0
+mni = 0
+
+##################################
+# Set up Envi Data and Intervals #
+##################################
+
+# store temperature data into a vector
+# 0 to 50, 1 MY intervals 
+# var <- v(-0.215938303, -0.072996046, 0.282391337, 0.858940652, 1.5318082, 1.654488567, 1.723787903, 2.173304284, 2.151096754, 2.199112598, 2.520758709, 2.797372442, 3.006927677, 3.367290618, 4.139214078, 5.147602619, 4.771612309, 4.117980295, 3.728266111, 3.464684348, 3.921058328, 3.838231386, 4.299607218, 3.69925572, 4.365785709, 4.708414646, 4.158452043, 3.519038439, 3.209216043, 3.439239854, 3.792186778, 3.513384229, 3.715084854, 3.211820706, 4.786932444, 5.145276839, 4.961098902, 5.365941807, 5.977099719, 6.638179822, 7.334358097, 7.29648816, 7.799122679, 8.059267945, 7.928598652, 8.15877005, 9.234566029, 10.19741553, 10.86097481, 11.5553562, 11.91553289, 12.70666198)
+
+# 0 to 50, 2 MY intervals 
+# var <- v(-0.215938303, 0.282391337, 1.5318082, 1.723787903, 2.151096754, 2.520758709, 3.006927677, 4.139214078, 4.771612309, 3.728266111, 3.921058328, 4.299607218, 4.365785709, 4.158452043, 3.209216043, 3.792186778, 3.715084854, 4.786932444, 4.961098902, 5.977099719, 7.334358097, 7.799122679, 7.928598652, 9.234566029, 10.86097481, 11.91553289)
+# 0 to 46, 2 MY intervals 
+# var <- v(-0.215938303, 0.282391337, 1.5318082, 1.723787903, 2.151096754, 2.520758709, 3.006927677, 4.139214078, 4.771612309, 3.728266111, 3.921058328, 4.299607218, 4.365785709, 4.158452043, 3.209216043, 3.792186778, 3.715084854, 4.786932444, 4.961098902, 5.977099719, 7.334358097, 7.799122679, 7.928598652, 9.234566029)
+
+# 0 to 50, 5 MY intervals
+# var <- v(-0.215938303, 1.654488567, 2.520758709, 5.147602619, 3.921058328, 4.708414646, 3.792186778, 5.145276839, 7.334358097, 8.15877005, 11.91553289)
+# 0 to 45, 5 MY intervals
+var <- v(-0.215938303, 1.654488567, 2.520758709, 5.147602619, 3.921058328, 4.708414646, 3.792186778, 5.145276839, 7.334358097, 8.15877005)
+
+# set maximum age of measurements 
+# MAX_VAR_AGE = 46	
+MAX_VAR_AGE = 45	
+
+# calculate the number of intervals
+NUM_INTERVALS = var.size()-1
+
+# set up time intervals
+interval_times <- MAX_VAR_AGE * (1:NUM_INTERVALS) / NUM_INTERVALS
+
+####################
+# Create the rates #
+####################
+
+# first we create the standard deviation of the rates between intervals
+# draw the sd from an exponential distribution
+speciation_sd ~ dnExponential(1.0)
+moves[++mvi] = mvScale(speciation_sd,weight=5.0)
+extinction_sd ~ dnExponential(1.0)
+moves[++mvi] = mvScale(extinction_sd,weight=5.0)
+
+# specify correlation coefficients and moves on coefficients
+# add RJ MCMC settings
+beta_speciation ~ dnReversibleJumpMixture(constantValue=0.0, baseDistribution=dnNormal(0,1.0), p=0.5)
+beta_extinction ~ dnReversibleJumpMixture(constantValue=0.0, baseDistribution=dnNormal(0,1.0), p=0.5)
+moves[++mvi] = mvRJSwitch(beta_speciation, weight=5)
+moves[++mvi] = mvRJSwitch(beta_extinction, weight=5)
+# beta_speciation ~ dnNormal(0,1.0)
+# beta_extinction ~ dnNormal(0,1.0)
+moves[++mvi] = mvSlide(beta_speciation,delta=1.0,weight=10.0)
+moves[++mvi] = mvSlide(beta_extinction,delta=1.0,weight=10.0)
+
+# set up posterior probability of zero correlation coefficients
+speciation_corr_prob := ifelse(beta_speciation == 0.0, 0, 1)
+extinction_corr_prob := ifelse(beta_extinction == 0.0, 0, 1)
+
+# set up posterior probability of positive and negative correlation coefficients
+speciation_corr_neg_prob := ifelse(beta_speciation < 0.0, 1, 0)
+extinction_corr_neg_prob := ifelse(beta_extinction < 0.0, 1, 0)
+speciation_corr_pos_prob := ifelse(beta_speciation > 0.0, 1, 0)
+extinction_corr_pos_prob := ifelse(beta_extinction > 0.0, 1, 0)
+
+# create a random variable at the present time for log transformed rates
+log_speciation[1] ~ dnUniform(-10.0,10.0)
+log_extinction[1] ~ dnUniform(-10.0,10.0)
+
+# apply moves on the log transformed rates
+moves[++mvi] = mvSlide(log_speciation[1], weight=2)
+moves[++mvi] = mvSlide(log_extinction[1], weight=2)
+
+# transform to actual rates
+speciation[1] := exp( log_speciation[1] )
+extinction[1] := exp( log_extinction[1] )
+
+
+for (i in 1:NUM_INTERVALS) {
+    index = i+1
+    # specify environmental variable correlated rates 
+    expected_speciation[index] := log_speciation[i] + beta_speciation * ln(abs(var[index]/var[i]))
+    expected_extinction[index] := log_extinction[i] + beta_extinction * ln(abs(var[index]/var[i]))
+    # specify normal priors (= Brownian motion) on the log of the rates
+    log_speciation[index] ~ dnNormal( mean=expected_speciation[index], sd=speciation_sd)
+    log_extinction[index] ~ dnNormal( mean=expected_extinction[index], sd=extinction_sd)
+    # apply moves on the rates
+    moves[++mvi] = mvSlide(log_speciation[index], weight=2)
+    moves[++mvi] = mvSlide(log_extinction[index], weight=2)
+    # transform the log-rate into actual rates
+    speciation[index] := exp( log_speciation[index] )
+    extinction[index] := exp( log_extinction[index] )
+}
+
+# apply moves on rate vectors
+moves[++mvi] = mvVectorSlide(log_speciation, weight=10)
+moves[++mvi] = mvVectorSlide(log_extinction, weight=10)
+
+# apply move to change the spread of several variables around their mean
+moves[++mvi] = mvShrinkExpand( log_speciation, sd=speciation_sd, weight=10 )
+moves[++mvi] = mvShrinkExpand( log_extinction, sd=extinction_sd, weight=10 )
+
+
+#######################
+# The missing species #
+#######################
+
+# specify missing species per clade
+abrtes = clade("abroscopus_albogularis_28164", "tesia_cyaniventer_27982", missing=29)
+acaxen = clade("acanthisitta_chloris", "xenicus_gilviventris_or0299521c", missing=2)
+acrnes = clade("acrocephalus_orientalis_28793", "nesillas_typica_356696", missing=57)
+aegpsa = clade("aegithalos_concinnus_28044", "psaltriparus_minimus_22642", missing=8)
+ailpti = clade("ailuroedus_buccoides_12226", "ptilonorhynchus_violaceus_10756", missing=17)
+phacal = clade("phaenicophilus_palmarum_6310", "calyptophilus_tertius_8060", missing=1)
+ammpas = clade("ammodramus_savannarum_b8557", "passerella_iliaca_b19389", missing=105)
+ammspi = clade("ammodramus_savannarum_b8557", "spizella_passerina_b30284", missing=9)
+artpel = clade("artamus_cinereus_6183", "peltops_blainvillii_809112", missing=10)
+melpel = clade("melloria_quoyi_4831", "peltops_blainvillii_809112", missing=1)
+blepyc = clade("bleda_syndactylus_29008", "pycnonotus_jocosus_23591", missing=128)
+calsmi = clade("calyptomena_viridis_b36377", "smithornis_rufolateralis_15673", missing=4)
+chapic = clade("chaetops_frenatus_52974", "picathartes_gymnocephalus_dot2030", missing=1)
+checul = clade("chelidorhynx_hypoxanthus_28022", "culicicapa_ceylonensis_9948", missing=7)
+chehyl = clade("chelidorhynx_hypoxanthus_28022", "hyliota_flavigaster_439359", missing=2)
+chlchl = clade("chloropsis_cochinchinensis_b84885", "chloropsis_sonnerati_24451", missing=9)
+chocur = clade("cholornis_unicolor_15113", "curruca_nana_28718", missing=60)
+cinpti = clade("cinclosoma_punctatum_57790", "ptilorrhoa_leucosticta_16514", missing=8)
+clicor = clade("climacteris_melanurus_8858", "cormobates_leucophaea_57452", missing=5)
+cnelob = clade("cnemophilus_loriae_16529", "loboparadisea_sericea_18403", missing=1)
+colpac = clade("colluricincla_harmonica_8866", "pachycephala_vitiensis_19410", missing=47)
+corpyr = clade("corvus_corax_30042", "pyrrhocorax_pyrrhocorax_28865", missing=123)
+devpet = clade("devioeca_papuana_18304", "petroica_multicolor_24355", missing=47)
+diclep = clade("dicaeum_hypoleucum_20176", "leptocoma_sperata_20350", missing=179)
+edoper = clade("edolisoma_tenuirostre_23644", "pericrocotus_divaricatus_10261", missing=83)
+embcal = clade("emberiza_citrinella_b12240", "calcarius_lapponicus_b46289", missing=45)
+erepan = clade("eremophila_alpestris_28950", "panurus_biarmicus_28797", missing=92)
+erpore = clade("erpornis_zantholeuca_27942", "oreocharis_arfaki_16440", missing=1)
+erppte = clade("erpornis_zantholeuca_27942", "pteruthius_aeralatus_17806", missing=8)
+erpvir = clade("erpornis_zantholeuca_27942", "vireo_solitarius_25186", missing=51)
+erysco = clade("erythrocercus_mccallii_8688", "scotocerca_inquieta_207198", missing=2)
+eurphi = clade("eurylaimus_ochromalus_b50329", "philepitta_castanea_438674", missing=10)
+falore = clade("falcunculus_frontatus_57627", "oreoica_gutturalis_6198", missing=4)
+fouaca = clade("foulehaio_carunculatus_26344", "acanthorhynchus_tenuirostris_10667", missing=37)
+foudas = clade("foulehaio_carunculatus_26344", "dasyornis_broadbenti_22840", missing=2)
+foumal = clade("foulehaio_carunculatus_26344", "malurus_alboscapulatus_16459", missing=31)
+foumel = clade("foulehaio_carunculatus_26344", "meliphaga_montana_12276", missing=136)
+hirpno = clade("hirundo_rustica_28789", "pnoepyga_pusilla_15250", missing=3)
+hirpro = clade("hirundo_rustica_28789", "progne_subis_6623", missing=82)
+hypbom = clade("hypocolius_ampelinus_466652", "bombycilla_garrulus_21744", missing=2)
+hypmet = clade("hypothymis_azurea_20189", "metabolus_takatsukasae_22596", missing=94)
+hypmoh = clade("hypocolius_ampelinus_466652", "moho_nobilis_193377", missing=4)
+hyppti = clade("hypocolius_ampelinus_466652", "ptilogonys_caudatus_b16009", missing=3)
+ictstu = clade("icterus_cucullatus_b24601", "sturnella_neglecta_b37047", missing=102)
+lamrhi = clade("lamprolia_victoriae_24329", "rhipidura_javanica_17717", missing=44)
+landic = clade("lanius_excubitor_28984", "dicrurus_aeneus_23352", missing=21)
+lanmel = clade("lanius_excubitor_28984", "melampitta_lugubris_16552", missing=1)
+lanpla = clade("lanius_excubitor_28984", "platylophus_galericulatus_24459", missing=33)
+lanstr = clade("lanius_excubitor_28984", "struthidea_cinerea_10728", missing=1)
+locmeg = clade("locustella_lanceolata_4248", "megalurus_palustris_21124", missing=54)
+macsyl = clade("macrosphenus_flavicans_29199", "sylvietta_virens_29174", missing=16)
+melstr = clade("melloria_quoyi_4831", "strepera_graculina_9660", missing=9)
+menatr = clade("menura_novaehollandiae_76638", "atrichornis_rufescens_554508", missing=2)
+mimbup = clade("mimus_polyglottos_b62704", "buphagus_erythrorhynchus_26687", missing=1)
+mimcin = clade("mimus_polyglottos_b62704", "cinclus_pallasii_11246", missing=4)
+mimstu = clade("mimus_polyglottos_b62704", "sturnus_vulgaris_3510", missing=146)
+modpro = clade("modulatrix_stictigula_356751", "promerops_gurneyi_70395", missing=3)
+mohdap = clade("mohoua_albicilla_96717", "daphoenositta_chrysoptera_23086", missing=3)
+mustur = clade("muscicapa_striata_26606", "turdus_albicollis_b2555", missing=460)
+neopla = clade("neopipo_cinnamomea_b42668", "platyrinchus_saturatus_b20178", missing=7)
+neptyr = clade("nephelomyias_lintoni_b34699", "tyrannus_albogularis_b7247", missing=304)
+nicmac = clade("nicator_chloris_29190", "macrosphenus_flavicans_29199", missing=2)
+oedmel = clade("oedistoma_iliolophus_16163", "melanocharis_versteri_18286", missing=5)
+oedtox = clade("oedistoma_iliolophus_16163", "toxorhamphus_novaeguineae_12252", missing=2)
+onymyi = clade("onychorhynchus_coronatus_b4194", "myiobius_villosus_b11928", missing=2)
+oripit = clade("oriolus_chinensis_10450", "pitohui_dichrous_12200", missing=33)
+ortcis = clade("orthotomus_castaneiceps_25615", "cisticola_anonymus_29165", missing=134)
+ortneo = clade("orthotomus_castaneiceps_25615", "neomixis_viridis_393344", missing=2)
+ortpom = clade("orthonyx_temminckii_76694", "pomatostomus_superciliosus_8792", missing=6)
+oxyxan = clade("oxylabes_madagascariensis_352915", "xanthomixis_zosterops_438702", missing=9)
+paraca = clade("pardalotus_striatus_8886", "acanthiza_cinerea_18352", missing=61)
+parpho = clade("paradisaea_minor_16148", "phonygammus_keraudrenii_12256", missing=39)
+parrem = clade("parus_major_11167", "remiz_consobrinus_28817", missing=67)
+phamic = clade("phaenicophilus_palmarum_6310", "microligea_palustris_6294", missing=2)
+phinot = clade("philesturnus_carunculatus_14862", "notiomystis_cincta_or027795c", missing=3)
+physei = clade("phylloscopus_trochilus_15495", "seicercus_montis_17754", missing=75)
+pitaeg = clade("pityriasis_gymnocephala_b50309", "aegithina_lafresnayei_23213", missing=3)
+pitpit = clade("pitta_cyanea_31228", "pitta_erythrogaster_15999", missing=27)
+pittch = clade("pityriasis_gymnocephala_b50309", "tchagra_senegalus_15518", missing=45)
+poecot = clade("poecilotriccus_latirostris_b14792", "cotinga_nattererii_b28578", missing=64)
+poemio = clade("poecilotriccus_latirostris_b14792", "mionectes_striaticollis_b58337", missing=103)
+poepip = clade("poecilotriccus_latirostris_b14792", "pipra_filicauda_b4330", missing=47)
+poepip = clade("poecilotriccus_latirostris_b14792", "piprites_chloris_3650", missing=2)
+pridya = clade("prionops_plumatus_26690", "dyaphorophyia_castanea_29120", missing=28)
+primac = clade("prionops_plumatus_26690", "machaerirhynchus_nigripectus_4734", missing=1)
+primys = clade("prionops_plumatus_26690", "mystacornis_crossleyi_345860", missing=22)
+pritep = clade("prionops_plumatus_26690", "tephrodornis_virgatus_30886", missing=11)
+psoeul = clade("psophodes_cristatus_6205", "eulacestoma_nigropectus_12102", missing=4)
+pygcon = clade("pygiptila_stellaris_b42777", "conopophaga_aurita_b35281", missing=9)
+pygmel = clade("pygiptila_stellaris_b42777", "melanopareia_maranonica_b14411", missing=3)
+pygtha = clade("pygiptila_stellaris_b42777", "thamnophilus_doliatus_b18845", missing=230)
+regreg = clade("regulus_calendula_b62760", "regulus_regulus_6778", missing=4)
+rhofri = clade("rhodinocichla_rosea_b26906", "fringilla_montifringilla_4293", missing=220)
+rhomot = clade("rhodinocichla_rosea_b26906", "motacilla_alba_10218", missing=66)
+rhopas = clade("rhodinocichla_rosea_b26906", "passer_domesticus_28860", missing=37)
+rhopru = clade("rhodinocichla_rosea_b26906", "prunella_fulvescens_28764", missing=11)
+salcer = clade("salpornis_spilonota_19873", "certhia_americana_30065", missing=9)
+salsit = clade("salpornis_spilonota_19873", "sitta_europea_30442", missing=24)
+schtit = clade("schiffornis_major_b4995", "tityra_cayana_b12385", missing=33)
+seiset = clade("seiurus_aurocapilla_b60642", "setophaga_magnolia_b5285", missing=106)
+spines = clade("spindalis_zena_b11380", "nesospingus_speculiferus_346162", missing=3)
+tancar = clade("tangara_arthus_b58408", "cardinalis_cardinalis_25393", missing=47)
+tancoe = clade("tangara_arthus_b58408", "coereba_flaveola_b46656", missing=369)
+tanmit = clade("tangara_arthus_b58408", "mitrospingus_cassinii_b46585", missing=3)
+trilei = clade("trichastoma_pyrrogenys_b36335", "leiothrix_lutea_b27032", missing=177)
+tritim = clade("trichastoma_pyrrogenys_b36335", "timalia_pileata_23375", missing=44)
+trizos = clade("trichastoma_pyrrogenys_b36335", "zosterops_everetti_13949", missing=121)
+tropol = clade("troglodytes_troglodytes_6774", "polioptila_caerulea_b25095", missing=95)
+videst = clade("vidua_regia_26698", "estrilda_melpoda_19721", missing=149)
+vidplo = clade("vidua_regia_26698", "ploceus_cucullatus_20062", missing=114)
+xenden = clade("xenops_minutus_b12378", "dendrocolaptes_sanctithomae_b8768", missing=50)
+xenfor = clade("xenops_minutus_b12378", "formicarius_analis_b26904", missing=11)
+xenfur = clade("xenops_minutus_b12378", "furnarius_rufus_11920", missing=226)
+xengra = clade("xenops_minutus_b12378", "grallaria_haplonota_b7883", missing=52)
+xenrhi = clade("xenops_minutus_b12378", "rhinocrypta_lanceolata_b6702", missing=56)
+xenscl = clade("xenops_minutus_b12378", "sclerurus_rufigularis_b48483", missing=16)
+zelpha = clade("zeledonia_coronata_b19768", "phaenicophilus_palmarum_6310", missing=2)
+
+# combine all clades into a single vector
+missing_species_per_clade = v(abrtes, acaxen, acrnes, aegpsa, ailpti, phacal, ammpas, ammspi, artpel, melpel, blepyc, calsmi, chapic, checul, chehyl, chlchl, chocur, cinpti, clicor, cnelob, colpac, corpyr, devpet, diclep, edoper, embcal, erepan, erpore, erppte, erpvir, erysco, eurphi, falore, fouaca, foudas, foumal, foumel, hirpno, hirpro, hypbom, hypmet, hypmoh, hyppti, ictstu, lamrhi, landic, lanmel, lanpla, lanstr, locmeg, macsyl, melstr, menatr, mimbup, mimcin, mimstu, modpro, mohdap, mustur, neopla, neptyr, nicmac, oedmel, oedtox, onymyi, oripit, ortcis, ortneo, ortpom, oxyxan, paraca, parpho, parrem, phamic, phinot, physei, pitaeg, pitpit, pittch, poecot, poemio, poepip, poepip, pridya, primac, primys, pritep, psoeul, pygcon, pygmel, pygtha, regreg, rhofri, rhomot, rhopas, rhopru, salcer, salsit, schtit, seiset, spines, tancar, tancoe, tanmit, trilei, tritim, trizos, tropol, videst, vidplo, xenden, xenfor, xenfur, xengra, xenrhi, xenscl, zelpha) 
+
+# specify episodic birth death model
+timetree ~ dnEpisodicBirthDeath(rootAge=T.rootAge(), lambdaRates=speciation, lambdaTimes=interval_times, muRates=extinction, muTimes=interval_times, rho=1.0, taxa=taxa, incompleteClades=missing_species_per_clade, condition="time")
+
+
+### clamp the model with the "observed" tree
+timetree.clamp(T)
+
+
+
+#############
+# The Model #
+#############
+
+
+### workspace model wrapper ###
+mymodel = model(timetree)
+
+### set up the monitors that will output parameter values to file and screen 
+monitors[++mni] = mnModel(filename="diversification_temp_RJ/empirical_5Mx9_1.log",printgen=10, separator = TAB)
+monitors[++mni] = mnFile(filename="diversification_temp_RJ/empirical_5Mx9_speciation_rates_1.log",printgen=10, separator = TAB, speciation)
+monitors[++mni] = mnFile(filename="diversification_temp_RJ/empirical_5Mx9_speciation_times_1.log",printgen=10, separator = TAB, interval_times)
+monitors[++mni] = mnFile(filename="diversification_temp_RJ/empirical_5Mx9_extinction_rates_1.log",printgen=10, separator = TAB, extinction)
+monitors[++mni] = mnFile(filename="diversification_temp_RJ/empirical_5Mx9_extinction_times_1.log",printgen=10, separator = TAB, interval_times)
+monitors[++mni] = mnScreen(printgen=1000, extinction_sd, speciation_sd)
+
+
+
+################
+# The Analysis #
+################
+
+### workspace mcmc ###
+# mymcmc = mcmcmc(mymodel, monitors, moves, nruns=2)
+mymcmc = mcmc(mymodel, monitors, moves)
+
+### pre-burnin to tune the proposals ###
+mymcmc.burnin(generations=10000,tuningInterval=200)
+
+### run the MCMC ###
+mymcmc.run(generations=200000)
+
+
+
+## quit ##
+q()
